@@ -583,12 +583,7 @@ def calc_co2_commuting(
     """
     # get weekly co2e for respective mode of transport
     if transportation_mode == "car":
-        weekly_co2e, _ = calc_co2_car(
-            passengers=passengers,
-            size=size,
-            fuel_type=fuel_type,
-            distance=weekly_distance,
-        )
+        weekly_co2e, distance = calc_co2_car(passengers=passengers, size=size, fuel_type=fuel_type, distance=weekly_distance)
     elif transportation_mode == "motorbike":
         weekly_co2e, _ = calc_co2_motorbike(size=size, distance=weekly_distance)
     elif transportation_mode == "bus":
@@ -614,9 +609,10 @@ def calc_co2_commuting(
         ]["co2e"].values[0]
         weekly_co2e = co2e * weekly_distance
     else:
-        raise ValueError(
-            f"Transportation mode {transportation_mode} not found in database."
-        )
+        raise ValueError('Transportation mode "%s" not found in database' % transportation_mode)
+
+    # multiply with work_weeks to obtain total (e.g. annual/monthly) co2e
+    #total_co2e = weekly_co2e #* work_weeks
 
     return weekly_co2e
 
