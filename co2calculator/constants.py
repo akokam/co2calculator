@@ -7,6 +7,16 @@ import enum
 KWH_TO_TJ = 277777.77777778
 
 
+class CommutingTransportationMode(enum.Enum):
+    CAR = 'Car'
+    BUS = 'Bus'
+    TRAIN = 'Train'
+    BIKE = 'Bike'
+    EBIKE = 'E-bike'
+    MOTORBIKE = 'Motorbike'
+    TRAM = 'Tram'
+
+
 class HeatingFuel(enum.Enum):
     HEAT_PUMP_AIR = 'Heat pump air'
     HEAT_PUMP_GROUND = 'Heat pump ground'
