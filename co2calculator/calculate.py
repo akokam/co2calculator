@@ -2,15 +2,22 @@
 # coding: utf-8
 """Functions to calculate co2 emissions"""
 
-import os
-from pathlib import Path
-from typing import Tuple
-import pandas as pd
+from tracemalloc import take_snapshot
+from typing import Callable, Dict, Tuple, Optional
+import enum
 import warnings
+from pathlib import Path
+
+
+import pandas as pd
+from pydantic import BaseModel
+
+
 from .distances import haversine
 from .distances import geocoding_airport, geocoding_structured, geocoding_train_stations
 from .distances import get_route
 from .constants import KWH_TO_TJ
+from ._types import Kilometer
 
 script_path = str(Path(__file__).parent)
 emission_factor_df = pd.read_csv(f"{script_path}/../data/emission_factors.csv")
@@ -18,6 +25,14 @@ conversion_factor_df = pd.read_csv(
     f"{script_path}/../data/conversion_factors_heating.csv"
 )
 detour_df = pd.read_csv(f"{script_path}/../data/detour.csv")
+
+
+class CalculationError(Exception):
+    """Base exception for all calculation errors"""
+
+
+class InputMissing(CalculationError):
+    """Raised if inputs are not sufficient for calculation"""
 
 
 def calc_co2_car(
@@ -534,7 +549,118 @@ def calc_co2_heating(
     return emissions
 
 
+@enum.unique
+class TransportationMode(str, enum.Enum):
+    """Available transportation modes"""
+
+    CAR = "car"
+    BUS = "bus"
+    TRAIN = "train"
+    PLANE = "plane"
+    FERRY = "ferry"
+
+
+@enum.unique
+class Size(str, enum.Enum):
+    """Available sizes for cars"""
+
+    SMALL = "small"
+    MEDIUM = "medium"
+    LARGE = "large"
+    AVERAGE = "average"
+
+
+@enum.unique
+class FuelType(str, enum.Enum):
+    """Available fuel types for cars"""
+
+    DIESEL = "diesel"
+    GASOLINE = "gasoline"
+    CNG = "cng"
+    ELECTRIC = "electric"
+    HYBRID = "hybrid"
+    PLUG_IN_HYBRID = "plug-in_hybrid"
+    AVERAGE = "average"
+
+
+class DistanceRequest(BaseModel):
+    """Request-model to calculate distances"""
+
+    ...
+
+
+class EmissionsRequest(BaseModel):
+    """Request-contract to calculate co2 emissions"""
+
+    transportation_mode: TransportationMode
+    distance: Kilometer
+    passengers: int
+    size: Size
+    fuel_type: FuelType
+
+
 def calc_co2_businesstrip(
+    transportation_mode: str,
+    start=None,
+    destination=None,
+    distance: float = None,
+    size: str = None,
+    fuel_type: str = None,
+    occupancy: int = None,
+    seating: str = None,
+    passengers: int = None,
+    roundtrip: bool = False,
+) -> Tuple[float, float, str, str]:
+    """Interface to calculate business trips"""
+    # TODO: Validate that type switch for `transportation_mode` is not a
+    # breaking change
+
+    # All co2 emissions are calculated for given distance. Hence, let's check
+    # if distance was parsed. If not, calculate that first.
+    # NOTE: Imho (Jakob): this should be taken care of by the caller (backend)
+
+    if not distance:
+        # TODO: Implement distance calculation based on start/stops, ...
+        distance = 42
+
+        if start is None or destination is None:
+            raise InputMissing(
+                "for location based calculations: start and destination must not be None"
+            )
+
+    # Set defaults
+
+    # Validate input
+    # NOTE: Inline `or` will set the defaults but won't raise a warning.
+    # TODO: Check how important warnings for defaults are!
+    request = EmissionsRequest(
+        transportation_mode=transportation_mode,
+        distance=distance,
+        passengers=passengers or 1,
+        size=size or Size.AVERAGE,
+        fuel_type=fuel_type or FuelType.AVERAGE,
+    )
+
+    computation: Dict[TransportationMode, Callable] = {
+        TransportationMode.CAR: calc_co2_car,
+        TransportationMode.BUS: calc_co2_bus,
+        TransportationMode.TRAIN: calc_co2_train,
+        # TODO: Complete with all modes
+    }
+
+    emissions, dist = computation[request.transportation_mode](
+        distance=request.distance,
+        passengers=request.passengers,
+        size=request.size,
+        fuel_type=request.fuel_type,
+    )
+
+    range_category, range_description = range_categories(dist)
+
+    return emissions, dist, range_category, range_description
+
+
+def calc_co2_businesstrip_old(
     transportation_mode: str,
     start=None,
     destination=None,
@@ -575,6 +701,7 @@ def calc_co2_businesstrip(
                 Range description (i.e., what range of distances does to category correspond to)
     :rtype: tuple[float, float, str, str]
     """
+
     if distance is None and (start is None or destination is None):
         assert ValueError("Either start and destination or distance must be provided.")
     elif distance is not None and (start is not None or destination is not None):
@@ -587,6 +714,7 @@ def calc_co2_businesstrip(
         stops = None
     elif start is not None and destination is not None and distance is None:
         # check if stops are provided in the right form
+        # TODO: Use pydantic BaseModel for start and destination (#69)
         if transportation_mode == "car" and (
             type(start) != str or type(destination) != str
         ):
